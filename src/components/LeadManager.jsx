@@ -3,25 +3,40 @@ import { Plus, Trash2, Mail, Download, Sparkles, Upload, AlertCircle, FileSpread
 import { supabase } from '../utils/supabase';
 import { analyzeCompany } from '../utils/gemini';
 
-export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutreach, session }) {
+export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutreach, session, isPremium }) {
   const [bulkInput, setBulkInput] = useState('');
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [activeResearchId, setActiveResearchId] = useState(null);
+  const [showPaywall, setShowPaywall] = useState(false);
 
   // Bulk add domains
   const handleBulkAdd = async (e) => {
     e.preventDefault();
     if (!bulkInput.trim() || !session?.user) return;
 
-    // naive split by comma, space, or newlines
     const domains = bulkInput
       .split(/[\n,\s]+/)
       .map(d => d.trim().toLowerCase())
       .filter(d => d.length > 0 && d.includes('.')); // naive domain check
 
     try {
-      const rowsToInsert = domains.map(domain => {
+      // Billing Gate Limit check: Truncate list to fit free slot limit
+      let domainsToImport = domains;
+      if (!isPremium) {
+        const slotsLeft = Math.max(0, 3 - leads.length);
+        if (domains.length > slotsLeft) {
+          domainsToImport = domains.slice(0, slotsLeft);
+          setShowPaywall(true);
+          if (domainsToImport.length === 0) {
+            setBulkInput('');
+            setShowBulkAdd(false);
+            return;
+          }
+        }
+      }
+
+      const rowsToInsert = domainsToImport.map(domain => {
         const companyName = domain.replace(/\.[^/.]+$/, "");
         return {
           company_name: companyName.charAt(0).toUpperCase() + companyName.slice(1),
@@ -42,7 +57,6 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
       if (error) throw error;
 
       if (data) {
-        // Map database objects to react state
         const newLeadsMapped = data.map(l => ({
           id: l.id,
           companyName: l.company_name,
@@ -81,10 +95,8 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'processing', valueProposition: 'AI is researching this domain...' } : l));
 
     try {
-      // 1. Perform AI analysis
       const result = await analyzeCompany(lead.domain, apiKey);
       
-      // 2. Update Supabase leads table
       const { error } = await supabase
         .from('leads')
         .update({
@@ -100,12 +112,9 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
 
       if (error) throw error;
 
-      // 3. Update local state
       setLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...result, status: 'completed' } : l));
     } catch (err) {
       console.error('Research error:', err);
-      
-      // Mark as error in DB
       await supabase
         .from('leads')
         .update({ status: 'error', value_proposition: `Research Failed: ${err.message}` })
@@ -152,7 +161,6 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
         setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, ...result, status: 'completed' } : l));
       } catch (err) {
         console.error('Bulk Research error for domain ' + lead.domain, err);
-        
         await supabase
           .from('leads')
           .update({ status: 'error', value_proposition: `Research Failed: ${err.message}` })
@@ -264,7 +272,6 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
       {/* Table & Actions */}
       <section className="glass-card">
         
-        {/* Table Operations */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
           <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--text-main)', fontSize: '1.1rem' }}>
             All Leads ({leads.length})
@@ -397,6 +404,92 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
           </div>
         )}
       </section>
+
+      {/* Paywall Modal */}
+      {showPaywall && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem'
+        }}>
+          <div className="glass-card fade-in" style={{
+            width: '100%',
+            maxWidth: '440px',
+            background: '#ffffff',
+            padding: '2.5rem 2rem',
+            textAlign: 'center',
+            boxShadow: '0 12px 40px rgba(0, 0, 0, 0.08)',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '52px',
+              height: '52px',
+              borderRadius: '50%',
+              background: 'rgba(0, 113, 227, 0.08)',
+              color: 'var(--primary)',
+              fontSize: '1.5rem',
+              fontWeight: 700,
+              marginBottom: '1.25rem'
+            }}>
+              ⚡
+            </div>
+            
+            <h3 style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.35rem',
+              fontWeight: 700,
+              marginBottom: '0.5rem',
+              color: 'var(--secondary)'
+            }}>
+              Unlock Unlimited Research
+            </h3>
+            
+            <p style={{
+              color: 'var(--text-muted)',
+              fontSize: '0.85rem',
+              lineHeight: '1.5',
+              marginBottom: '2rem'
+            }}>
+              You have reached the limit of 3 lead profiles on the Free Plan. Bulk import lists were truncated to fit the limit. Upgrade to the Pro Plan to unlock unlimited database operations.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <a 
+                href="https://buy.stripe.com/test_eVq3cu0G6bz64lAcir4gg00" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '0.7rem', display: 'flex', justifyContent: 'center' }}
+                onClick={() => setShowPaywall(false)}
+              >
+                Upgrade to Pro — $19/mo
+              </a>
+              
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                style={{ width: '100%', padding: '0.7rem' }}
+                onClick={() => setShowPaywall(false)}
+              >
+                Maybe Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

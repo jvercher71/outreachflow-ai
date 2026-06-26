@@ -3,10 +3,11 @@ import { Sparkles, Users, Mail, AlertTriangle, ArrowRight, Plus, Terminal } from
 import { supabase } from '../utils/supabase';
 import { analyzeCompany } from '../utils/gemini';
 
-export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreach, session }) {
+export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreach, session, isPremium }) {
   const [quickDomain, setQuickDomain] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [showPaywall, setShowPaywall] = useState(false);
 
   // Statistics
   const totalLeads = leads.length;
@@ -18,6 +19,12 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
     
     setErrorMsg('');
 
+    // Billing Gate Limit Check
+    if (!isPremium && leads.length >= 3) {
+      setShowPaywall(true);
+      return;
+    }
+
     if (!apiKey) {
       setErrorMsg("Please add your Gemini API Key in Settings first to run real-time AI research.");
       return;
@@ -27,7 +34,6 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
     let dbLead = null;
 
     try {
-      // 1. Insert lead into Supabase Postgres database
       const companyNameInit = quickDomain.replace(/\.[^/.]+$/, "");
       const { data, error } = await supabase
         .from('leads')
@@ -46,7 +52,6 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
       if (error) throw error;
       dbLead = data;
 
-      // 2. Append temporary lead mapping to local React state
       const newLeadMapped = {
         id: dbLead.id,
         companyName: dbLead.company_name,
@@ -62,10 +67,8 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
       setLeads(prev => [newLeadMapped, ...prev]);
       setQuickDomain('');
 
-      // 3. Perform real-time Gemini Company Research
       const result = await analyzeCompany(dbLead.domain, apiKey);
       
-      // 4. Update lead row in Supabase database
       const { error: updateError } = await supabase
         .from('leads')
         .update({
@@ -81,7 +84,6 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
 
       if (updateError) throw updateError;
 
-      // 5. Update local React state
       setLeads(prev => prev.map(item => {
         if (item.id === dbLead.id) {
           return {
@@ -96,7 +98,6 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
       console.error('Quick Add Error:', err);
       setErrorMsg(err.message || "Failed to analyze domain.");
 
-      // If we inserted a row, mark it as error in DB and local state
       if (dbLead) {
         await supabase
           .from('leads')
@@ -161,7 +162,7 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
         </div>
       </section>
 
-      {/* Main Grid: Quick Add & Recent Leads */}
+      {/* Main Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
         
         {/* Quick Add Research Box */}
@@ -273,6 +274,92 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
         </section>
 
       </div>
+
+      {/* Modern Apple-like Paywall Modal */}
+      {showPaywall && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem'
+        }}>
+          <div className="glass-card fade-in" style={{
+            width: '100%',
+            maxWidth: '440px',
+            background: '#ffffff',
+            padding: '2.5rem 2rem',
+            textAlign: 'center',
+            boxShadow: '0 12px 40px rgba(0, 0, 0, 0.08)',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '52px',
+              height: '52px',
+              borderRadius: '50%',
+              background: 'rgba(0, 113, 227, 0.08)',
+              color: 'var(--primary)',
+              fontSize: '1.5rem',
+              fontWeight: 700,
+              marginBottom: '1.25rem'
+            }}>
+              ⚡
+            </div>
+            
+            <h3 style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.35rem',
+              fontWeight: 700,
+              marginBottom: '0.5rem',
+              color: 'var(--secondary)'
+            }}>
+              Unlock Unlimited Research
+            </h3>
+            
+            <p style={{
+              color: 'var(--text-muted)',
+              fontSize: '0.85rem',
+              lineHeight: '1.5',
+              marginBottom: '2rem'
+            }}>
+              You have reached the limit of 3 lead profiles on the Free Plan. Upgrade to the Pro Plan to research unlimited domains, parse custom pain points, and generate personalized campaigns.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <a 
+                href="https://buy.stripe.com/test_eVq3cu0G6bz64lAcir4gg00" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '0.7rem', display: 'flex', justifyContent: 'center' }}
+                onClick={() => setShowPaywall(false)}
+              >
+                Upgrade to Pro — $19/mo
+              </a>
+              
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                style={{ width: '100%', padding: '0.7rem' }}
+                onClick={() => setShowPaywall(false)}
+              >
+                Maybe Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

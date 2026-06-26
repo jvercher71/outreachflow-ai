@@ -13,6 +13,7 @@ function App() {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [leads, setLeads] = useState([]);
   const [apiKey, setApiKey] = useState('');
+  const [isPremium, setIsPremium] = useState(false);
   
   const [userProfile, setUserProfile] = useState({
     senderName: '',
@@ -50,6 +51,7 @@ function App() {
         senderProductDesc: ''
       });
       setApiKey('');
+      setIsPremium(false);
     }
   }, [session]);
 
@@ -71,6 +73,7 @@ function App() {
           senderProductDesc: data.sender_product_desc || ''
         });
         setApiKey(data.gemini_api_key || '');
+        setIsPremium(data.is_premium || false);
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
@@ -121,15 +124,16 @@ function App() {
     try {
       const { error } = await supabase
         .from('profiles')
-        .upsert({
-          id: session.user.id,
+        .update({
           sender_name: newProfile.senderName,
           sender_title: newProfile.senderTitle,
           sender_company: newProfile.senderCompany,
           sender_product_desc: newProfile.senderProductDesc,
           gemini_api_key: newApiKey,
           updated_at: new Date().toISOString()
-        });
+        })
+        .eq('id', session.user.id);
+      
       if (error) throw error;
       setUserProfile(newProfile);
       setApiKey(newApiKey);
@@ -156,6 +160,7 @@ function App() {
             apiKey={apiKey}
             onNavigateToOutreach={handleNavigateToOutreach}
             session={session}
+            isPremium={isPremium}
           />
         );
       case 'leads':
@@ -166,6 +171,7 @@ function App() {
             apiKey={apiKey}
             onNavigateToOutreach={handleNavigateToOutreach}
             session={session}
+            isPremium={isPremium}
           />
         );
       case 'outreach':
@@ -188,6 +194,9 @@ function App() {
             userProfile={userProfile}
             setUserProfile={setUserProfile}
             onSaveProfile={handleSaveProfile}
+            isPremium={isPremium}
+            setIsPremium={setIsPremium}
+            session={session}
           />
         );
       default:
@@ -258,6 +267,30 @@ function App() {
             <SettingsIcon /> Settings
           </button>
         </nav>
+
+        {/* Upgrade Card for Free Accounts */}
+        {!isPremium && (
+          <div style={{
+            margin: '1.5rem 0.5rem 1rem 0.5rem',
+            padding: '1rem',
+            background: 'rgba(0, 113, 227, 0.05)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid rgba(0, 113, 227, 0.12)',
+            textAlign: 'center'
+          }}>
+            <h5 style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--primary)' }}>Upgrade to Pro</h5>
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.75rem', lineHeight: '1.3' }}>Unlock unlimited AI research and B2B email drafts</p>
+            <a 
+              href="https://buy.stripe.com/test_eVq3cu0G6bz64lAcir4gg00" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="btn btn-primary btn-sm"
+              style={{ width: '100%', fontSize: '0.75rem', padding: '0.35rem' }}
+            >
+              Upgrade Plan
+            </a>
+          </div>
+        )}
 
         <div className="user-widget" style={{ flexDirection: 'column', gap: '0.75rem', alignItems: 'stretch' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>

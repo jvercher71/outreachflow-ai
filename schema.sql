@@ -10,7 +10,8 @@ create table public.profiles (
   sender_title text,
   sender_company text,
   sender_product_desc text,
-  gemini_api_key text
+  gemini_api_key text,
+  is_premium boolean default false
 );
 
 -- Enable Row Level Security (RLS) on Profiles
