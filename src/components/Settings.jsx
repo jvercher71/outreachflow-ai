@@ -106,7 +106,7 @@ export default function Settings({ apiKey, setApiKey, userProfile, setUserProfil
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               {!isPremium && (
                 <a 
-                  href="https://buy.stripe.com/test_7sY28q3SieLibO24PZ4gg01" 
+                  href="https://buy.stripe.com/dRmfZg62Y98S556cBq9k400" 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="btn btn-primary"

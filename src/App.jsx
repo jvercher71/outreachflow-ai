@@ -281,7 +281,7 @@ function App() {
             <h5 style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--primary)' }}>Upgrade to Pro</h5>
             <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.75rem', lineHeight: '1.3' }}>Unlock unlimited AI research and B2B email drafts</p>
             <a 
-              href="https://buy.stripe.com/test_7sY28q3SieLibO24PZ4gg01" 
+              href="https://buy.stripe.com/dRmfZg62Y98S556cBq9k400" 
               target="_blank" 
               rel="noopener noreferrer"
               className="btn btn-primary btn-sm"
