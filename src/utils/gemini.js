@@ -26,7 +26,7 @@ export async function analyzeCompany(domainOrName, apiKey) {
   try {
     // If using the official SDK (GoogleGenAI handles modern endpoints)
     const ai = new GoogleGenerativeAI(apiKey);
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `
       You are an elite B2B sales researcher. Research the company associated with the domain or name: "${domainOrName}".
@@ -85,7 +85,7 @@ export async function generateOutreachEmail({ lead, userProfile, config, apiKey 
 
   try {
     const ai = new GoogleGenerativeAI(apiKey);
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `
       You are an expert copywriter specializing in high-converting B2B cold email outreach.
