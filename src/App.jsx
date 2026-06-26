@@ -1,73 +1,143 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, Users, Mail, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Users, Mail, Settings as SettingsIcon, LogOut, Loader } from 'lucide-react';
+import { supabase } from './utils/supabase';
 import Dashboard from './components/Dashboard';
 import LeadManager from './components/LeadManager';
 import OutreachStudio from './components/OutreachStudio';
 import SettingsComponent from './components/Settings';
+import Auth from './components/Auth';
 
 function App() {
   const [activeView, setActiveView] = useState('dashboard');
+  const [session, setSession] = useState(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [leads, setLeads] = useState([]);
+  const [apiKey, setApiKey] = useState('');
   
-  // Load settings & data from localStorage
-  const [apiKey, setApiKey] = useState(() => {
-    return localStorage.getItem('of_gemini_api_key') || '';
-  });
-  
-  const [userProfile, setUserProfile] = useState(() => {
-    const saved = localStorage.getItem('of_user_profile');
-    return saved ? JSON.parse(saved) : {
-      senderName: '',
-      senderTitle: '',
-      senderCompany: '',
-      senderProductDesc: ''
-    };
+  const [userProfile, setUserProfile] = useState({
+    senderName: '',
+    senderTitle: '',
+    senderCompany: '',
+    senderProductDesc: ''
   });
 
-  const [leads, setLeads] = useState(() => {
-    const saved = localStorage.getItem('of_leads');
-    // Seed some premium sample data if empty so the UI looks incredible on first launch!
-    return saved ? JSON.parse(saved) : [
-      {
-        id: 'sample-1',
-        companyName: 'Acme Corp',
-        domain: 'acme.com',
-        industry: 'SaaS / DevTools',
-        valueProposition: 'Building automated developer pipelines for cloud migration.',
-        targetAudience: 'Enterprise engineering managers',
-        painPoints: ['Slow code deployment cycles', 'High cloud egress costs', 'Manual QA bottlenecks'],
-        hooks: ['Impressive 40% growth in developer headcount last quarter', 'Shifting towards multi-cloud architecture'],
-        status: 'completed',
-        emailSubject: 'Automating Acme’s deployments in Q3?',
-        emailBody: 'Hi Engineering Team,\n\nI noticed Acme is scaling dev workflows quickly. With your shift to multi-cloud, manual QA might bottleneck deployment velocity. Our team helps dev managers cut cycles by 60%.\n\nOpen to a quick 5-minute chat next Tuesday?\n\nBest,\nUser'
-      },
-      {
-        id: 'sample-2',
-        companyName: 'Apex Health',
-        domain: 'apexhealth.io',
-        industry: 'Healthcare Tech',
-        valueProposition: 'Telehealth patient record compliance platform.',
-        targetAudience: 'Private clinical networks',
-        painPoints: ['Complex HIPAA compliance audits', 'Slow patient intake', 'Outdated EHR integrations'],
-        hooks: ['Expanding to 3 new clinic locations next month', 'High-quality patient portal rating'],
-        status: 'pending',
-        emailSubject: '',
-        emailBody: ''
+  // Listen to Auth State Changes
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoadingAuth(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setLoadingAuth(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Fetch data when authenticated user session changes
+  useEffect(() => {
+    if (session?.user) {
+      fetchProfile(session.user.id);
+      fetchLeads();
+    } else {
+      setLeads([]);
+      setUserProfile({
+        senderName: '',
+        senderTitle: '',
+        senderCompany: '',
+        senderProductDesc: ''
+      });
+      setApiKey('');
+    }
+  }, [session]);
+
+  const fetchProfile = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (error && error.code !== 'PGRST116') throw error; // PGRST116 is single row empty
+      
+      if (data) {
+        setUserProfile({
+          senderName: data.sender_name || '',
+          senderTitle: data.sender_title || '',
+          senderCompany: data.sender_company || '',
+          senderProductDesc: data.sender_product_desc || ''
+        });
+        setApiKey(data.gemini_api_key || '');
       }
-    ];
-  });
+    } catch (err) {
+      console.error('Error fetching profile:', err);
+    }
+  };
 
-  // Persist changes
-  useEffect(() => {
-    localStorage.setItem('of_gemini_api_key', apiKey);
-  }, [apiKey]);
+  const fetchLeads = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      if (data) {
+        // Map postgres naming to react state naming
+        const mapped = data.map(l => ({
+          id: l.id,
+          companyName: l.company_name,
+          domain: l.domain,
+          industry: l.industry || 'Not Analyzed',
+          valueProposition: l.value_proposition || '',
+          targetAudience: l.target_audience || '',
+          painPoints: l.pain_points || [],
+          hooks: l.hooks || [],
+          status: l.status,
+          emailSubject: l.email_subject || '',
+          emailBody: l.email_body || ''
+        }));
+        setLeads(mapped);
+      }
+    } catch (err) {
+      console.error('Error fetching leads:', err);
+    }
+  };
 
-  useEffect(() => {
-    localStorage.setItem('of_user_profile', JSON.stringify(userProfile));
-  }, [userProfile]);
+  // Sign out handler
+  const handleSignOut = async () => {
+    if (confirm("Are you sure you want to sign out?")) {
+      await supabase.auth.signOut();
+    }
+  };
 
-  useEffect(() => {
-    localStorage.setItem('of_leads', JSON.stringify(leads));
-  }, [leads]);
+  // Profile save helper (passed to settings)
+  const handleSaveProfile = async (newProfile, newApiKey) => {
+    if (!session?.user) return;
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .upsert({
+          id: session.user.id,
+          sender_name: newProfile.senderName,
+          sender_title: newProfile.senderTitle,
+          sender_company: newProfile.senderCompany,
+          sender_product_desc: newProfile.senderProductDesc,
+          gemini_api_key: newApiKey,
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
+      setUserProfile(newProfile);
+      setApiKey(newApiKey);
+    } catch (err) {
+      console.error('Error saving profile:', err);
+      throw err;
+    }
+  };
 
   // Navigate to a specific view with optional state
   const [selectedLeadId, setSelectedLeadId] = useState(null);
@@ -85,6 +155,7 @@ function App() {
             setLeads={setLeads}
             apiKey={apiKey}
             onNavigateToOutreach={handleNavigateToOutreach}
+            session={session}
           />
         );
       case 'leads':
@@ -94,6 +165,7 @@ function App() {
             setLeads={setLeads} 
             apiKey={apiKey}
             onNavigateToOutreach={handleNavigateToOutreach}
+            session={session}
           />
         );
       case 'outreach':
@@ -105,6 +177,7 @@ function App() {
             setSelectedLeadId={setSelectedLeadId}
             userProfile={userProfile}
             apiKey={apiKey}
+            session={session}
           />
         );
       case 'settings':
@@ -114,6 +187,7 @@ function App() {
             setApiKey={setApiKey}
             userProfile={userProfile}
             setUserProfile={setUserProfile}
+            onSaveProfile={handleSaveProfile}
           />
         );
       default:
@@ -121,9 +195,37 @@ function App() {
     }
   };
 
+  // Auth Loading Screen
+  if (loadingAuth) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        flexDirection: 'column',
+        gap: '1rem',
+        color: 'var(--text-muted)'
+      }}>
+        <Loader className="spinner" size={24} style={{ borderTopColor: 'var(--primary)' }} />
+        <span>Syncing workspace...</span>
+      </div>
+    );
+  }
+
+  // Not Logged In Screen
+  if (!session) {
+    return (
+      <div style={{ padding: '2rem 1rem' }}>
+        <Auth />
+      </div>
+    );
+  }
+
+  // Logged In Shell
   return (
     <div className="app-container">
-      {/* Sidebar Navigation (Desktop) */}
+      {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="logo-container">
           <div className="logo-icon">⚡</div>
@@ -157,18 +259,37 @@ function App() {
           </button>
         </nav>
 
-        <div className="user-widget">
-          <div className="avatar">
-            {userProfile.senderName ? userProfile.senderName.charAt(0).toUpperCase() : 'U'}
+        <div className="user-widget" style={{ flexDirection: 'column', gap: '0.75rem', alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <div className="avatar">
+              {userProfile.senderName ? userProfile.senderName.charAt(0).toUpperCase() : 'U'}
+            </div>
+            <div className="user-info" style={{ flexGrow: 1 }}>
+              <span className="user-name">{userProfile.senderName || session.user.email.split('@')[0]}</span>
+              <span className="user-role">{userProfile.senderTitle || 'Outreach Specialist'}</span>
+            </div>
           </div>
-          <div className="user-info">
-            <span className="user-name">{userProfile.senderName || 'Active User'}</span>
-            <span className="user-role">{userProfile.senderTitle || 'Outreach Specialist'}</span>
-          </div>
+          
+          <button 
+            onClick={handleSignOut}
+            className="btn btn-secondary btn-sm"
+            style={{ 
+              display: 'flex', 
+              gap: '0.4rem', 
+              justifyContent: 'center',
+              padding: '0.4rem',
+              width: '100%',
+              fontSize: '0.8rem',
+              borderColor: 'rgba(0,0,0,0.1)'
+            }}
+          >
+            <LogOut size={14} />
+            Sign Out
+          </button>
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Mobile Bottom Navigation */}
       <nav className="mobile-tabs">
         <button 
           className={`mobile-tab-btn ${activeView === 'dashboard' ? 'active' : ''}`}
@@ -200,7 +321,7 @@ function App() {
         </button>
       </nav>
 
-      {/* Main Content Area */}
+      {/* Main Content */}
       <main className="main-content">
         {renderActiveView()}
       </main>

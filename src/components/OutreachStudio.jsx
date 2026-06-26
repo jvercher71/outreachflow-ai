@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Mail, Copy, Send, Sparkles, AlertCircle, Save, CheckCircle, Info } from 'lucide-react';
+import { supabase } from '../utils/supabase';
 import { generateOutreachEmail } from '../utils/gemini';
 
-export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSelectedLeadId, userProfile, apiKey }) {
-  // Filter leads that are researched (completed)
+export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSelectedLeadId, userProfile, apiKey, session }) {
   const completedLeads = leads.filter(l => l.status === 'completed');
-
-  // Handle auto-selection of active lead
   const [activeLead, setActiveLead] = useState(null);
 
   useEffect(() => {
@@ -17,7 +15,6 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
         return;
       }
     }
-    // Default to first completed lead
     if (completedLeads.length > 0) {
       setActiveLead(completedLeads[0]);
       setSelectedLeadId(completedLeads[0].id);
@@ -49,7 +46,6 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
     }
   }, [activeLead]);
 
-  // Lead selection callback
   const handleSelectLead = (e) => {
     const id = e.target.value;
     setSelectedLeadId(id);
@@ -66,7 +62,6 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
       return;
     }
 
-    // Verify sender profile has basic info
     if (!userProfile.senderName || !userProfile.senderCompany) {
       setErrorMsg("Please complete your Sender Profile (Name & Company) in Settings so the AI knows who you are.");
       return;
@@ -75,6 +70,7 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
     setIsGenerating(true);
 
     try {
+      // 1. Generate via Gemini
       const emailResult = await generateOutreachEmail({
         lead: activeLead,
         userProfile,
@@ -85,12 +81,23 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
       setSubject(emailResult.subject);
       setBody(emailResult.body);
       
-      // Save it directly to state
+      // 2. Save to Postgres
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          email_subject: emailResult.subject,
+          email_body: emailResult.body
+        })
+        .eq('id', activeLead.id);
+
+      if (error) throw error;
+
+      // 3. Update local state
       updateLeadEmail(activeLead.id, emailResult.subject, emailResult.body);
       setSaveStatus('Draft generated and saved.');
       setTimeout(() => setSaveStatus(''), 4000);
     } catch (err) {
-      console.error(err);
+      console.error('Email Generation Error:', err);
       setErrorMsg(err.message || "Failed to generate outreach email.");
     } finally {
       setIsGenerating(false);
@@ -98,14 +105,30 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
   };
 
   // Manual save handler
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (!activeLead) return;
-    updateLeadEmail(activeLead.id, subject, body);
-    setSaveStatus('Draft saved successfully.');
-    setTimeout(() => setSaveStatus(''), 3000);
+    
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          email_subject: subject,
+          email_body: body
+        })
+        .eq('id', activeLead.id);
+
+      if (error) throw error;
+
+      updateLeadEmail(activeLead.id, subject, body);
+      setSaveStatus('Draft saved successfully.');
+      setTimeout(() => setSaveStatus(''), 3000);
+    } catch (err) {
+      console.error('Save draft error:', err);
+      alert('Failed to save draft to database: ' + err.message);
+    }
   };
 
-  // State update helper
+  // Local state helper
   const updateLeadEmail = (leadId, sub, text) => {
     setLeads(prev => prev.map(l => {
       if (l.id === leadId) {
@@ -119,7 +142,7 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
     }));
   };
 
-  // Copy to clipboard helper
+  // Copy helper
   const handleCopyClipboard = () => {
     const fullText = `Subject: ${subject}\n\n${body}`;
     navigator.clipboard.writeText(fullText);
@@ -127,7 +150,7 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
     setTimeout(() => setSaveStatus(''), 3000);
   };
 
-  // Open in default mail client helper
+  // Mailto helper
   const handleMailto = () => {
     const encodedSubject = encodeURIComponent(subject);
     const encodedBody = encodeURIComponent(body);
@@ -173,7 +196,6 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
             {/* Left Controls & Intelligence */}
             <aside style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               
-              {/* Account Intelligence summary */}
               {activeLead && (
                 <div className="glass-card" style={{ borderLeft: '4px solid var(--primary)' }}>
                   <h4 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.75rem', fontSize: '1.05rem', color: 'var(--text-main)' }}>
@@ -196,7 +218,7 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
                 </div>
               )}
 
-              {/* Generation Settings Form */}
+              {/* Settings Form */}
               <div className="glass-card">
                 <h4 style={{ fontFamily: 'var(--font-display)', marginBottom: '1.25rem', fontSize: '1.05rem' }}>
                   Email Settings
@@ -275,7 +297,7 @@ export default function OutreachStudio({ leads, setLeads, selectedLeadId, setSel
                 </form>
 
                 {errorMsg && (
-                  <div className="api-notice-box" style={{ background: 'rgba(239, 68, 68, 0.05)', borderColor: 'rgba(239, 68, 68, 0.25)', color: '#ff8a8a', marginTop: '1rem', marginBottom: 0 }}>
+                  <div className="api-notice-box" style={{ background: 'rgba(255, 59, 48, 0.05)', borderColor: 'rgba(255, 59, 48, 0.15)', color: 'var(--danger)', marginTop: '1rem', marginBottom: 0 }}>
                     <AlertCircle style={{ width: '18px', height: '18px' }} />
                     <div>
                       <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Generation Issue:</p>

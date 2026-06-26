@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Sparkles, Users, Mail, AlertTriangle, ArrowRight, Plus, Terminal } from 'lucide-react';
+import { supabase } from '../utils/supabase';
 import { analyzeCompany } from '../utils/gemini';
 
-export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreach }) {
+export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreach, session }) {
   const [quickDomain, setQuickDomain] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -10,46 +11,79 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
   // Statistics
   const totalLeads = leads.length;
   const completedLeads = leads.filter(l => l.status === 'completed').length;
-  const pendingLeads = leads.filter(l => l.status === 'pending').length;
-  const errorLeads = leads.filter(l => l.status === 'error').length;
 
   const handleQuickAdd = async (e) => {
     e.preventDefault();
-    if (!quickDomain) return;
+    if (!quickDomain || !session?.user) return;
     
     setErrorMsg('');
 
-    // If API key is missing, warn the user
     if (!apiKey) {
       setErrorMsg("Please add your Gemini API Key in Settings first to run real-time AI research.");
       return;
     }
 
     setIsProcessing(true);
-
-    // Create a temporary pending lead object
-    const newLeadId = 'lead-' + Date.now();
-    const tempLead = {
-      id: newLeadId,
-      companyName: quickDomain.replace(/\.[^/.]+$/, ""), // naive company name from domain
-      domain: quickDomain,
-      status: 'processing',
-      industry: 'Analyzing...',
-      valueProposition: 'AI is researching this domain...',
-      targetAudience: '',
-      painPoints: [],
-      hooks: []
-    };
-
-    setLeads(prev => [tempLead, ...prev]);
-    setQuickDomain('');
+    let dbLead = null;
 
     try {
-      // Call real Gemini Company Analyzer
-      const result = await analyzeCompany(quickDomain, apiKey);
+      // 1. Insert lead into Supabase Postgres database
+      const companyNameInit = quickDomain.replace(/\.[^/.]+$/, "");
+      const { data, error } = await supabase
+        .from('leads')
+        .insert({
+          company_name: companyNameInit.charAt(0).toUpperCase() + companyNameInit.slice(1),
+          domain: quickDomain,
+          status: 'processing',
+          user_id: session.user.id,
+          value_proposition: 'AI is researching this domain...',
+          pain_points: [],
+          hooks: []
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      dbLead = data;
+
+      // 2. Append temporary lead mapping to local React state
+      const newLeadMapped = {
+        id: dbLead.id,
+        companyName: dbLead.company_name,
+        domain: dbLead.domain,
+        status: 'processing',
+        industry: 'Analyzing...',
+        valueProposition: 'AI is researching this domain...',
+        targetAudience: '',
+        painPoints: [],
+        hooks: []
+      };
+
+      setLeads(prev => [newLeadMapped, ...prev]);
+      setQuickDomain('');
+
+      // 3. Perform real-time Gemini Company Research
+      const result = await analyzeCompany(dbLead.domain, apiKey);
       
+      // 4. Update lead row in Supabase database
+      const { error: updateError } = await supabase
+        .from('leads')
+        .update({
+          company_name: result.companyName,
+          industry: result.industry,
+          value_proposition: result.valueProposition,
+          target_audience: result.targetAudience,
+          pain_points: result.painPoints,
+          hooks: result.hooks,
+          status: 'completed'
+        })
+        .eq('id', dbLead.id);
+
+      if (updateError) throw updateError;
+
+      // 5. Update local React state
       setLeads(prev => prev.map(item => {
-        if (item.id === newLeadId) {
+        if (item.id === dbLead.id) {
           return {
             ...item,
             ...result,
@@ -59,18 +93,27 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
         return item;
       }));
     } catch (err) {
-      console.error(err);
-      setLeads(prev => prev.map(item => {
-        if (item.id === newLeadId) {
-          return {
-            ...item,
-            status: 'error',
-            valueProposition: `AI Research failed: ${err.message}`
-          };
-        }
-        return item;
-      }));
+      console.error('Quick Add Error:', err);
       setErrorMsg(err.message || "Failed to analyze domain.");
+
+      // If we inserted a row, mark it as error in DB and local state
+      if (dbLead) {
+        await supabase
+          .from('leads')
+          .update({ status: 'error', value_proposition: `AI Research failed: ${err.message}` })
+          .eq('id', dbLead.id);
+
+        setLeads(prev => prev.map(item => {
+          if (item.id === dbLead.id) {
+            return {
+              ...item,
+              status: 'error',
+              valueProposition: `AI Research failed: ${err.message}`
+            };
+          }
+          return item;
+        }));
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -152,7 +195,7 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
           </form>
 
           {errorMsg && (
-            <div className="api-notice-box" style={{ background: 'rgba(239, 68, 68, 0.05)', borderColor: 'rgba(239, 68, 68, 0.25)', color: '#ff8a8a' }}>
+            <div className="api-notice-box" style={{ background: 'rgba(255, 59, 48, 0.05)', borderColor: 'rgba(255, 59, 48, 0.15)', color: 'var(--danger)' }}>
               <AlertTriangle style={{ width: '18px', height: '18px' }} />
               <div>
                 <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Research Alert:</p>
@@ -165,8 +208,8 @@ export default function Dashboard({ leads, setLeads, apiKey, onNavigateToOutreac
             <div className="api-notice-box">
               <Terminal style={{ width: '18px', height: '18px' }} />
               <div>
-                <p style={{ fontWeight: 600 }}>Demo Mode active</p>
-                <p>Add your API Key in Settings to run live Google Gemini analysis queries.</p>
+                <p style={{ fontWeight: 600 }}>API Configuration Required</p>
+                <p>Add your Gemini API Key in Settings to run live Google Gemini analysis queries.</p>
               </div>
             </div>
           )}

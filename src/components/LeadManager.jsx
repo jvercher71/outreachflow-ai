@@ -1,42 +1,70 @@
 import { useState } from 'react';
 import { Plus, Trash2, Mail, Download, Sparkles, Upload, AlertCircle, FileSpreadsheet } from 'lucide-react';
+import { supabase } from '../utils/supabase';
 import { analyzeCompany } from '../utils/gemini';
 
-export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutreach }) {
+export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutreach, session }) {
   const [bulkInput, setBulkInput] = useState('');
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [activeResearchId, setActiveResearchId] = useState(null);
 
   // Bulk add domains
-  const handleBulkAdd = (e) => {
+  const handleBulkAdd = async (e) => {
     e.preventDefault();
-    if (!bulkInput.trim()) return;
+    if (!bulkInput.trim() || !session?.user) return;
 
     // naive split by comma, space, or newlines
     const domains = bulkInput
       .split(/[\n,\s]+/)
       .map(d => d.trim().toLowerCase())
-      .filter(d => d.length > 0 && d.includes('.')); // very naive domain check
+      .filter(d => d.length > 0 && d.includes('.')); // naive domain check
 
-    const newLeads = domains.map(domain => {
-      const companyName = domain.replace(/\.[^/.]+$/, "");
-      return {
-        id: 'lead-' + Math.random().toString(36).substring(2, 9) + '-' + Date.now(),
-        companyName: companyName.charAt(0).toUpperCase() + companyName.slice(1),
-        domain: domain,
-        status: 'pending',
-        industry: 'Not Analyzed',
-        valueProposition: 'Pending AI research. Click "Research" to start.',
-        targetAudience: '',
-        painPoints: [],
-        hooks: []
-      };
-    });
+    try {
+      const rowsToInsert = domains.map(domain => {
+        const companyName = domain.replace(/\.[^/.]+$/, "");
+        return {
+          company_name: companyName.charAt(0).toUpperCase() + companyName.slice(1),
+          domain: domain,
+          status: 'pending',
+          user_id: session.user.id,
+          value_proposition: 'Pending AI research. Click "Research" to start.',
+          pain_points: [],
+          hooks: []
+        };
+      });
 
-    setLeads(prev => [...newLeads, ...prev]);
-    setBulkInput('');
-    setShowBulkAdd(false);
+      const { data, error } = await supabase
+        .from('leads')
+        .insert(rowsToInsert)
+        .select();
+
+      if (error) throw error;
+
+      if (data) {
+        // Map database objects to react state
+        const newLeadsMapped = data.map(l => ({
+          id: l.id,
+          companyName: l.company_name,
+          domain: l.domain,
+          status: l.status,
+          industry: l.industry || 'Not Analyzed',
+          valueProposition: l.value_proposition || '',
+          targetAudience: l.target_audience || '',
+          painPoints: l.pain_points || [],
+          hooks: l.hooks || [],
+          emailSubject: l.email_subject || '',
+          emailBody: l.email_body || ''
+        }));
+
+        setLeads(prev => [...newLeadsMapped, ...prev]);
+        setBulkInput('');
+        setShowBulkAdd(false);
+      }
+    } catch (err) {
+      console.error('Bulk Import Error:', err);
+      alert('Failed to import leads: ' + err.message);
+    }
   };
 
   // Run research on a single lead
@@ -53,10 +81,36 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'processing', valueProposition: 'AI is researching this domain...' } : l));
 
     try {
+      // 1. Perform AI analysis
       const result = await analyzeCompany(lead.domain, apiKey);
+      
+      // 2. Update Supabase leads table
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          company_name: result.companyName,
+          industry: result.industry,
+          value_proposition: result.valueProposition,
+          target_audience: result.targetAudience,
+          pain_points: result.painPoints,
+          hooks: result.hooks,
+          status: 'completed'
+        })
+        .eq('id', leadId);
+
+      if (error) throw error;
+
+      // 3. Update local state
       setLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...result, status: 'completed' } : l));
     } catch (err) {
-      console.error(err);
+      console.error('Research error:', err);
+      
+      // Mark as error in DB
+      await supabase
+        .from('leads')
+        .update({ status: 'error', value_proposition: `Research Failed: ${err.message}` })
+        .eq('id', leadId);
+
       setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'error', valueProposition: `Research Failed: ${err.message}` } : l));
     } finally {
       setActiveResearchId(null);
@@ -81,9 +135,29 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
       
       try {
         const result = await analyzeCompany(lead.domain, apiKey);
+        
+        await supabase
+          .from('leads')
+          .update({
+            company_name: result.companyName,
+            industry: result.industry,
+            value_proposition: result.valueProposition,
+            target_audience: result.targetAudience,
+            pain_points: result.painPoints,
+            hooks: result.hooks,
+            status: 'completed'
+          })
+          .eq('id', lead.id);
+
         setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, ...result, status: 'completed' } : l));
       } catch (err) {
-        console.error(err);
+        console.error('Bulk Research error for domain ' + lead.domain, err);
+        
+        await supabase
+          .from('leads')
+          .update({ status: 'error', value_proposition: `Research Failed: ${err.message}` })
+          .eq('id', lead.id);
+
         setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, status: 'error', valueProposition: `Research Failed: ${err.message}` } : l));
       }
     }
@@ -93,9 +167,21 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
   };
 
   // Delete lead
-  const handleDeleteLead = (leadId) => {
-    if (confirm("Are you sure you want to delete this lead?")) {
+  const handleDeleteLead = async (leadId) => {
+    if (!confirm("Are you sure you want to delete this lead?")) return;
+
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .delete()
+        .eq('id', leadId);
+
+      if (error) throw error;
+
       setLeads(prev => prev.filter(l => l.id !== leadId));
+    } catch (err) {
+      console.error('Delete lead error:', err);
+      alert('Failed to delete lead: ' + err.message);
     }
   };
 
@@ -103,10 +189,7 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
   const handleExportCSV = () => {
     if (leads.length === 0) return;
 
-    // header columns
     const headers = ["Company Name", "Domain", "Industry", "Value Proposition", "Target Audience", "Pain Points", "Subject", "Email Body"];
-    
-    // rows
     const rows = leads.map(l => [
       l.companyName || "",
       l.domain || "",
@@ -118,7 +201,6 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
       l.emailBody || ""
     ]);
 
-    // combine
     const csvContent = "data:text/csv;charset=utf-8," 
       + [headers.map(h => `"${h.replace(/"/g, '""')}"`).join(","), 
          ...rows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(","))]

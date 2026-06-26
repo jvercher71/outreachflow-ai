@@ -1,18 +1,41 @@
-import { useState } from 'react';
-import { Eye, EyeOff, Save, Key, User, Info, CheckCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Eye, EyeOff, Save, Key, User, Info, CheckCircle, AlertTriangle } from 'lucide-react';
 
-export default function Settings({ apiKey, setApiKey, userProfile, setUserProfile }) {
+export default function Settings({ apiKey, setApiKey, userProfile, setUserProfile, onSaveProfile }) {
   const [showKey, setShowKey] = useState(false);
+  const [localApiKey, setLocalApiKey] = useState(apiKey);
   const [profileForm, setProfileForm] = useState({ ...userProfile });
+  const [loading, setLoading] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleSave = (e) => {
+  // Sync profile form when props load (since they load asynchronously from Supabase)
+  useEffect(() => {
+    setProfileForm({ ...userProfile });
+  }, [userProfile]);
+
+  useEffect(() => {
+    setLocalApiKey(apiKey);
+  }, [apiKey]);
+
+  const handleSave = async (e) => {
     e.preventDefault();
-    setUserProfile(profileForm);
-    setSavedFeedback(true);
-    setTimeout(() => {
-      setSavedFeedback(false);
-    }, 3000);
+    setLoading(true);
+    setSavedFeedback(false);
+    setErrorMsg('');
+
+    try {
+      await onSaveProfile(profileForm, localApiKey);
+      setSavedFeedback(true);
+      setTimeout(() => {
+        setSavedFeedback(false);
+      }, 3000);
+    } catch (err) {
+      console.error(err);
+      setErrorMsg(err.message || 'Failed to save changes.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleProfileChange = (e) => {
@@ -32,7 +55,7 @@ export default function Settings({ apiKey, setApiKey, userProfile, setUserProfil
         </div>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
+      <form onSubmit={handleSave} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
         
         {/* API Key Panel */}
         <section className="glass-card">
@@ -42,12 +65,12 @@ export default function Settings({ apiKey, setApiKey, userProfile, setUserProfil
           </h3>
           
           <div className="api-notice-box">
-            <Info style={{ width: '18px', height: '18px' }} />
+            <Info style={{ width: '18px', height: '18px', flexShrink: 0 }} />
             <div>
               <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>How it works:</p>
-              <p>Your API key is stored safely directly in your local browser's <code>localStorage</code>. It is never sent to any server except directly to Google's Gemini API endpoints.</p>
+              <p>Your API key is saved to your profile in the database. It is only accessible to you and is used directly to make request queries to Google Gemini.</p>
               <p style={{ marginTop: '0.5rem' }}>
-                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 500 }}>
+                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'underline', fontWeight: 500 }}>
                   Get a free Gemini API Key from Google AI Studio &rarr;
                 </a>
               </p>
@@ -55,15 +78,16 @@ export default function Settings({ apiKey, setApiKey, userProfile, setUserProfil
           </div>
 
           <div className="form-group">
-            <label htmlFor="apiKey">Gemini API Key</label>
+            <label htmlFor="localApiKey">Gemini API Key</label>
             <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
               <input
-                id="apiKey"
+                id="localApiKey"
                 type={showKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                value={localApiKey}
+                onChange={(e) => setLocalApiKey(e.target.value)}
                 placeholder="AIzaSy..."
                 style={{ paddingRight: '2.5rem' }}
+                disabled={loading}
               />
               <button
                 type="button"
@@ -92,79 +116,97 @@ export default function Settings({ apiKey, setApiKey, userProfile, setUserProfil
             Sender Profile
           </h3>
 
-          <form onSubmit={handleSave}>
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="senderName">Your Name</label>
-                <input
-                  id="senderName"
-                  name="senderName"
-                  type="text"
-                  value={profileForm.senderName}
-                  onChange={handleProfileChange}
-                  placeholder="e.g. John Vercher"
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="senderTitle">Your Job Title</label>
-                <input
-                  id="senderTitle"
-                  name="senderTitle"
-                  type="text"
-                  value={profileForm.senderTitle}
-                  onChange={handleProfileChange}
-                  placeholder="e.g. Head of Business Development"
-                  required
-                />
-              </div>
-            </div>
-
+          <div className="form-row">
             <div className="form-group">
-              <label htmlFor="senderCompany">Your Company Name</label>
+              <label htmlFor="senderName">Your Name</label>
               <input
-                id="senderCompany"
-                name="senderCompany"
+                id="senderName"
+                name="senderName"
                 type="text"
-                value={profileForm.senderCompany}
+                value={profileForm.senderName || ''}
                 onChange={handleProfileChange}
-                placeholder="e.g. OutreachFlow Systems"
+                placeholder="e.g. John Vercher"
                 required
+                disabled={loading}
               />
             </div>
 
             <div className="form-group">
-              <label htmlFor="senderProductDesc">Product / Service Pitch</label>
-              <textarea
-                id="senderProductDesc"
-                name="senderProductDesc"
-                value={profileForm.senderProductDesc}
+              <label htmlFor="senderTitle">Your Job Title</label>
+              <input
+                id="senderTitle"
+                name="senderTitle"
+                type="text"
+                value={profileForm.senderTitle || ''}
                 onChange={handleProfileChange}
-                placeholder="Explain what your product does, who it helps, and the key benefit (e.g. 'A workflow automation builder that helps HR teams save 12 hours a week on candidate screening by auto-grading resumes')"
+                placeholder="e.g. Head of Business Development"
                 required
+                disabled={loading}
               />
             </div>
+          </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
+          <div className="form-group">
+            <label htmlFor="senderCompany">Your Company Name</label>
+            <input
+              id="senderCompany"
+              name="senderCompany"
+              type="text"
+              value={profileForm.senderCompany || ''}
+              onChange={handleProfileChange}
+              placeholder="e.g. OutreachFlow Systems"
+              required
+              disabled={loading}
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="senderProductDesc">Product / Service Pitch</label>
+            <textarea
+              id="senderProductDesc"
+              name="senderProductDesc"
+              value={profileForm.senderProductDesc || ''}
+              onChange={handleProfileChange}
+              placeholder="Explain what your product does, who it helps, and the key benefit (e.g. 'A workflow automation builder that helps HR teams save 12 hours a week on candidate screening by auto-grading resumes')"
+              required
+              disabled={loading}
+            />
+          </div>
+
+          {errorMsg && (
+            <div className="api-notice-box" style={{ background: 'rgba(255, 59, 48, 0.05)', borderColor: 'rgba(255, 59, 48, 0.15)', color: 'var(--danger)' }}>
+              <AlertTriangle style={{ width: '18px', height: '18px' }} />
               <div>
-                {savedFeedback && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.9rem', fontWeight: 500 }}>
-                    <CheckCircle size={18} />
-                    Profile saved successfully!
-                  </span>
-                )}
+                <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Save Error:</p>
+                <p>{errorMsg}</p>
               </div>
-              
-              <button type="submit" className="btn btn-primary">
-                <Save size={18} />
-                Save Changes
-              </button>
             </div>
-          </form>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
+            <div>
+              {savedFeedback && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.9rem', fontWeight: 500 }}>
+                  <CheckCircle size={18} />
+                  Workspace saved and synced!
+                </span>
+              )}
+            </div>
+            
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? (
+                <span className="spinner"></span>
+              ) : (
+                <>
+                  <Save size={18} />
+                  Save Settings
+                </>
+              )}
+            </button>
+          </div>
         </section>
 
-      </div>
+      </form>
     </div>
   );
 }
