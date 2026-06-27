@@ -468,7 +468,7 @@ export default function LeadManager({ leads, setLeads, apiKey, onNavigateToOutre
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <a 
-                href="https://buy.stripe.com/dRmfZg62Y98S556cBq9k400" 
+                href={`https://buy.stripe.com/dRmfZg62Y98S556cBq9k400?client_reference_id=${session?.user?.id}`} 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="btn btn-primary"
